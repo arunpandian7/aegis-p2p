@@ -8,8 +8,15 @@
     "start": "next start",
     "db:push": "dotenv -e .env.local -- drizzle-kit push",
     "db:studio": "dotenv -e .env.local -- drizzle-kit studio",
-    "seed": "dotenv -e .env.local -- tsx scripts/seed.ts",
+    "check-env": "dotenv -e .env.local -- tsx scripts/check-env.ts",
+    "bootstrap": "dotenv -e .env.local -- tsx scripts/bootstrap.ts",
+    "seed": "dotenv -e .env.local -- tsx scripts/seed-work-units.ts",
+    "try-explain": "dotenv -e .env.local -- tsx scripts/try-explain.ts",
+    "inspect-local": "tsx scripts/inspect-local.ts",
+    "inspect-signals": "tsx scripts/inspect-signals.ts",
     "client": "dotenv -e .env.local -- tsx client/index.ts",
+    "client:dry": "tsx client/index.ts --dry",
+    "e2e:web-ingest": "dotenv -e .env.local -- tsx scripts/e2e-web-ingest.mts",
     "test:extension": "node --test extension/test/*.test.mjs"
   },
   "dependencies": {

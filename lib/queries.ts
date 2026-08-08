@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { sessions, workUnits, usageEvents, toolCalls } from "@/db/schema";
 
@@ -21,8 +21,6 @@ export type IssueRow = {
   estimate: number | null;
   costUsd: number;
   sessionCount: number;
-  claudeCodeCostUsd: number;
-  chatCostUsd: number;
   methods: string[];
   confidences: string[];
 };
@@ -40,8 +38,6 @@ export async function listIssues(): Promise<IssueRow[]> {
       estimate: workUnits.estimate,
       costUsd: sql<number>`coalesce(sum(${sessions.totalCostUsd}), 0)`,
       sessionCount: sql<number>`count(${sessions.id})`,
-      claudeCodeCostUsd: sql<number>`coalesce(sum(${sessions.totalCostUsd}) filter (where ${sessions.surface} = 'claude_code'), 0)`,
-      chatCostUsd: sql<number>`coalesce(sum(${sessions.totalCostUsd}) filter (where ${sessions.surface} = 'chat'), 0)`,
       methods: sql<string[]>`coalesce(array_agg(distinct ${sessions.attributionMethod}) filter (where ${sessions.id} is not null), '{}')`,
       confidences: sql<string[]>`coalesce(array_agg(distinct ${sessions.attributionConfidence}) filter (where ${sessions.id} is not null), '{}')`,
     })
@@ -181,17 +177,6 @@ export async function toolCallsForSession(sessionId: string) {
     .from(toolCalls)
     .where(eq(toolCalls.sessionId, sessionId))
     .orderBy(toolCalls.eventSeq);
-}
-
-/** Sessions with no work unit yet — the queue on the engineer's own page. */
-export async function unattributedSessions(limit = 50) {
-  const db = getDb();
-  return db
-    .select()
-    .from(sessions)
-    .where(isNull(sessions.workUnitId))
-    .orderBy(desc(sessions.startedAt))
-    .limit(limit);
 }
 
 export async function recentSessions(limit = 25) {
