@@ -43,7 +43,11 @@ export default async function MePage() {
         <p className="mt-1 max-w-2xl text-sm text-[var(--color-dim)]">
           Yours to attribute. Nothing here is attributed without you confirming it, and anything
           you mark personal stays out of every rollup on the team board — not hidden in the UI,
-          excluded from the queries.
+          excluded from the queries. Claude and ChatGPT web conversations live on{" "}
+          <Link href="/me/chats" className="underline">
+            My chats
+          </Link>
+          , separately, because their usage is estimated and never denominated in dollars.
         </p>
       </div>
 

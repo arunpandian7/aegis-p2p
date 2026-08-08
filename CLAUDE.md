@@ -31,6 +31,8 @@ pnpm exec tsx scripts/inspect-signals.ts  # the digest the explainer receives
 
 pnpm exec dotenv -e .env.local -- pnpm exec tsx client/index.ts   # ingest
 pnpm exec tsx client/index.ts --dry                                # parse only
+
+pnpm test:extension                       # browser collector unit tests, no deps needed
 ```
 
 Only Next.js auto-loads `.env.local`. Every script needs the `dotenv -e` prefix.
@@ -50,6 +52,29 @@ nothing installed but the collector.
 ignore and new ones appear between Claude Code releases. Unknown rows are
 skipped, never treated as errors.
 
+### The second collector: `extension/`
+
+An opt-in Manifest V3 extension reads **claude.ai and chatgpt.com pages the
+engineer already has open** and posts to the same ingest route. It exists under
+terms recorded in **ADR-0002**; read that before widening what it captures.
+
+It is a different kind of data and must stay one: no provider reports per-message
+tokens on the web, so the collector counts messages and estimates
+`ceil(chars / 4)`. Those rows are `usage_basis = 'estimated'`,
+`cost_basis = 'pool'`, `is_private = true`, attribution `none`, and their model
+string (`<provider>-web-unreported`) deliberately has **no rate in
+`lib/pricing.ts`** — so `costOf()` returns zero and `priced: false`. A web chat
+cannot contribute a dollar to anything by construction.
+
+Plaintext never leaves the page. The content script reads message text only to
+produce a count, an estimate and a SHA-256 change digest; the ingest key lives in
+`TRUSTED_CONTEXTS` storage the content script cannot reach. `extension/test/`
+asserts a message body cannot reach the payload even if one is handed to the
+service worker by mistake.
+
+Provider DOM is not a public API. When extraction fails, `content.js` sends
+nothing rather than guessing from an unrelated element.
+
 ## Invariants — do not break these
 
 **1. Cache creation is split by TTL.** `cache_creation.ephemeral_1h_input_tokens`
@@ -65,7 +90,11 @@ still cost what it cost.
 
 **3. `cost_basis` separates dollars from pool.** API consumption is
 `'dollars'`; seat-plan chat is `'pool'` and is never summed into a dollar total.
-Enforced as a column, not a convention.
+Enforced as a column, not a convention. `usage_basis` is the companion axis —
+`'reported'` for provider-supplied token counts, `'estimated'` for anything the
+browser collector derived from characters. Never render an estimated figure with
+a dollar sign, and never put the two bases on one axis; `/me` and `/me/chats` are
+separate routes for exactly this reason.
 
 **4. Attribution always travels with its method and confidence.** Use
 `confidenceMix()` before rendering any total. Direct, derived, tagged and
@@ -98,8 +127,11 @@ the same task varies up to 30×.
   quoted paths, and `cd`-prefixes and `VAR=value` env assignments are noise that
   hide the command actually doing the work.
 - There is **no session-level cost API for claude.ai chat** at any plan tier. See
-  ADR-0001. Do not propose scraping, a browser extension, or estimating chat cost
-  from an export — all three were considered and rejected.
+  ADR-0001. Scraping and estimating chat *cost* remain rejected: the cache
+  read/write split carries almost the whole bill and is unrecoverable from text,
+  so any dollar figure would be confidently wrong. ADR-0002 later admitted a
+  consented browser collector for **token and message counts only** — that is a
+  narrow exception on volume, not a reopening of the cost question.
 
 ## Database
 

@@ -89,12 +89,26 @@ export const workUnits = aegis.table(
 export const sessions = aegis.table(
   "sessions",
   {
-    /** Claude Code's own sessionId — the natural key, so replays are idempotent. */
+    /** Provider conversation/session id, namespaced by the client for idempotency. */
     id: text("id").primaryKey(),
     machineId: text("machine_id").references(() => machines.id),
     userId: text("user_id").references(() => users.id),
-    /** claude_code | chat | api | cursor */
+    /** anthropic | openai */
+    provider: text("provider").notNull().default("anthropic"),
+    /** claude_code | claude_web | chatgpt_web | api | cursor */
     surface: text("surface").notNull().default("claude_code"),
+    /** Provider-native ids stay separate from Aegis' namespaced primary key. */
+    externalProjectId: text("external_project_id"),
+    externalProjectName: text("external_project_name"),
+    externalConversationId: text("external_conversation_id"),
+    externalConversationUrl: text("external_conversation_url"),
+    conversationTitle: text("conversation_title"),
+    /** transcript | extension | export | compliance_api */
+    captureMethod: text("capture_method").notNull().default("transcript"),
+    /** reported | estimated | unavailable */
+    usageBasis: text("usage_basis").notNull().default("reported"),
+    /** Digest of captured messages. The browser collector never uploads message text. */
+    contentHash: text("content_hash"),
     cwd: text("cwd"),
     repo: text("repo"),
     gitBranch: text("git_branch"),
@@ -125,6 +139,7 @@ export const sessions = aegis.table(
   (t) => [
     index("sessions_work_unit_idx").on(t.workUnitId),
     index("sessions_started_idx").on(t.startedAt),
+    index("sessions_provider_project_idx").on(t.provider, t.externalProjectId),
   ],
 );
 

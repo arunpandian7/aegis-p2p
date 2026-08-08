@@ -10,6 +10,7 @@ export const metadata: Metadata = {
 const NAV = [
   { href: "/", label: "Sprint" },
   { href: "/me", label: "My sessions" },
+  { href: "/me/chats", label: "My chats" },
   { href: "/live", label: "Live" },
   { href: "/settings/keys", label: "Keys" },
 ];

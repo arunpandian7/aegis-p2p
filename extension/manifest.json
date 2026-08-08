@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Aegis Project Tracker",
+  "version": "0.1.0",
+  "description": "Privately tracks project-level Claude and ChatGPT usage in Aegis.",
+  "permissions": ["storage"],
+  "optional_host_permissions": ["http://*/*", "https://*/*"],
+  "background": {
+    "service_worker": "service-worker.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://claude.ai/*", "https://chatgpt.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "Aegis Project Tracker",
+    "default_popup": "popup.html"
+  },
+  "options_page": "options.html"
+}

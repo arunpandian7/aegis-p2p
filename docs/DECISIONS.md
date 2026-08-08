@@ -141,3 +141,98 @@ cut list in [Idea.md](./Idea.md) §6.
 - **Ask Anthropic mentors:** is the on-disk transcript format something we can
   build on, or should we expect it to move? That is now the single dependency
   under the Claude Code ingestion path.
+
+---
+
+## ADR-0002 — Browser capture is admitted, as estimated pool usage under stated terms
+
+**Date:** 2026-08-08
+**Status:** Accepted
+**Supersedes:** [ADR-0001](#adr-0001--dollar-accounting-is-api-side-only-claudeai-chat-is-pool-consumption)
+§*Not doing*, first bullet — "browser extension for chat capture"
+
+### Context
+
+ADR-0001 rejected a browser extension in one line: it "contradicts the privacy
+stance, which is load-bearing for the pitch, not decoration." PR #1 shipped one
+anyway, for Claude Projects and ChatGPT Projects.
+
+Rather than merge code that the decision log says we would not write, this
+record states what changed and what the collector had to prove.
+
+### What the original objection was actually about
+
+Re-reading it, ADR-0001 collapsed two different things under one bullet:
+
+1. **Scraping** — reaching into a logged-in session, replaying private provider
+   APIs, or lifting cookies. This is what contradicts the privacy stance, and it
+   remains rejected.
+2. **Reading a page the engineer already has open, with their consent.** This is
+   not the same act, and the ADR never separately argued against it.
+
+The second is the same shape as the Claude Code collector, which nobody objected
+to: a local process, on the engineer's machine, reading something already on
+their disk or screen, and uploading only what they turned on.
+
+### Decision
+
+The browser collector is admitted, subject to terms that are testable rather
+than aspirational:
+
+1. **Inert until consent.** No capture until the engineer ticks the box in the
+   options page. The content script cannot read the ingest key — it can only ask
+   the service worker for a boolean.
+2. **No credentials, ever.** No cookies, no site storage, no session or auth
+   tokens. Not "we don't currently"; there is no code path that reads them.
+3. **Plaintext dies in the page.** Message text is read to produce a count, a
+   `ceil(chars / 4)` estimate, and a SHA-256 change digest, then discarded. A
+   test asserts the payload cannot contain a message body even when one is
+   handed to the service worker by mistake.
+4. **Tokens, never dollars.** Web rows carry `usage_basis = 'estimated'` and
+   `cost_basis = 'pool'`. The model string (`anthropic-web-unreported`) has no
+   entry in `lib/pricing.ts`, so `costOf()` returns zero and `priced: false` —
+   the absence of a rate is what enforces this, not a caller remembering to
+   check.
+5. **Private by default.** `is_private = true` on every row, and the roll-up at
+   `/me/chats` is scoped to the owner in the SQL, not in the markup.
+6. **Never on a team surface uninvited.** Attribution resolves to
+   `none`/`none`; a web chat reaches a work unit only when the engineer tags it,
+   which is `tagged` — the same human-confirmation path ADR-0001 §Decision.3
+   already specified for chat.
+
+### What ADR-0001 got right and this does not overturn
+
+**No cost figure is synthesised.** The finding that decided ADR-0001 still
+holds exactly: input-side spend was 59–100% of session cost, raw `input_tokens`
+were negligible against 13,360 cache-read and 18,161 cache-creation on a
+representative message, and the 1h/5m creation split bills at 2.0× and 1.25×.
+None of that is recoverable from rendered text.
+
+So we ship **counts**. A message count and a character-derived token estimate
+are directional figures about volume, and they are labelled as such on the only
+page that renders them. They are not a cost with error bars, and the schema
+makes it impossible for them to become one by accident.
+
+### Consequences
+
+**We gain:** the cross-surface claim becomes demonstrable instead of
+aspirational — one engineer, one board, Claude Code in dollars and web chat in
+pool units, visibly not added together.
+
+**We lose:** a DOM dependency on two products whose markup is not a public API.
+`extension/content.js` will break, and when it does the failure mode is a
+conversation silently landing in *Unfiled chats* rather than an error. That is
+the cost of this record, and it is why the collector sends nothing rather than
+guessing when extraction fails.
+
+**We accept:** `ceil(chars / 4)` is a crude estimator with no stated error band.
+`docs/ROADMAP.md` P1 carries the work to version and calibrate it. Until then
+the number is honest only because of what sits next to it — the word
+*estimated*, and no dollar sign.
+
+### Not doing (unchanged from ADR-0001)
+
+- Reading cookies, site storage, or replaying private provider APIs.
+- Uploading prompts or responses by default.
+- Converting estimated web tokens into marginal dollars.
+- Ranking engineers by chat volume or token count.

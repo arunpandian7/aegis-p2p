@@ -66,6 +66,28 @@ a participant relationship rather than surveillance, and it is the only way
 session-level data exists at all for surfaces with no API (see
 [DECISIONS.md](./DECISIONS.md) ADR-0001).
 
+### `/me/chats` — My chats
+
+Claude and ChatGPT web conversations captured by the browser collector
+(`extension/`), grouped by the provider's own project. Conversations outside a
+project group under **Unfiled chats**.
+
+Deliberately a separate route from `/me` rather than a fourth section on it.
+Everything on `/me` is API-priced in dollars; everything here is
+`usage_basis = 'estimated'` / `cost_basis = 'pool'`, and the two must not share
+a page where a reader could take one total for the other. **No dollar figure
+appears on this page at all** — the tiles count projects, conversations,
+messages and estimated tokens.
+
+The query filters on the owner *and* `is_private`, the same way the team
+aggregates in `lib/queries.ts` filter private rows: in the SQL, not the markup.
+Conversation links are re-validated against `https://claude.ai` and
+`https://chatgpt.com` before rendering, since the URL arrives from a browser
+extension.
+
+Terms the collector runs under: [DECISIONS.md](./DECISIONS.md) ADR-0002.
+Architecture and data inventory: [HANDOFF.md](./HANDOFF.md).
+
 ### `/live` — Live ingest
 
 Polls `/api/recent` every 3 seconds and lists the most recent sessions. Rows that
@@ -122,6 +144,46 @@ whole transcripts on every run, so re-running it — including mid-demo — cann
 double-count. Tool calls have no natural key, so a session's set is replaced
 wholesale rather than deduped row by row.
 
+Every mutable column on a conflicting `usage_events` row is set from
+`excluded.*` — the row we tried to insert. That is invisible for a transcript
+slice, whose values never change, and load-bearing for the browser collector,
+whose single `seq = 0` event grows as the conversation does.
+
+The browser collector (`extension/`) posts to the same route with the same
+auth, adding optional provider fields:
+
+```jsonc
+{
+  "sessionId": "web:openai:conversation-123",  // web:<provider>:<conversationId>
+  "provider": "openai",                        // anthropic | openai
+  "surface": "chatgpt_web",                    // claude_web | chatgpt_web
+  "externalProjectId": "g-p-…", "externalProjectName": "Hackathon",
+  "externalConversationId": "conversation-123",
+  "externalConversationUrl": "https://chatgpt.com/g/g-p-…/c/conversation-123",
+  "conversationTitle": "Launch plan",
+  "captureMethod": "extension",                // transcript | extension | export | compliance_api
+  "usageBasis": "estimated",                   // reported | estimated | unavailable
+  "contentHash": "<sha256>",                   // change digest, not content
+  "costBasis": "pool", "isPrivate": true,
+  "messageCount": 6,                           // web chats are one aggregate event, so the
+  "events": [ /* one event at seq 0 */ ]       // message count arrives separately
+}
+```
+
+`model` on those events is `<provider>-web-unreported`, which has no rate in
+`lib/pricing.ts` — so `costOf()` returns zero and `priced: false`. A web
+conversation cannot contribute a dollar to anything, by construction rather
+than by convention. See ADR-0002.
+
+CORS preflight is answered only for `chrome-extension://` origins. A wildcard
+would let any page a victim visits replay a leaked ingest key from their
+browser; the Node clients aren't subject to CORS and lose nothing.
+
+Sessions that fail validation — no `sessionId`, no `events`, or an unparseable
+`startedAt`/`endedAt` — are skipped and named in the response's `rejected`
+array rather than failing the batch. The collector reads timestamps out of the
+DOM, so a bad one is a real input.
+
 Attribution is resolved on ingest and the audit trail in `attributions` records
 **changes only**; an ingest that resolves to the same answer writes nothing.
 
@@ -174,6 +236,7 @@ is summarisation, not reasoning, and medium keeps it responsive on stage.
 | `/issues/BAT-99` | 404 — correct, unknown issue |
 | `/sessions/[id]` | 200 |
 | `/me` | 200, suggest→confirm exercised end to end |
+| `/me/chats` | 200, empty state and populated roll-up both rendered |
 | `/live` | 200 |
 | `/settings/keys` | 200 |
 | `/api/explain/*`, `/api/recent`, `/api/attribute`, `/api/ingest/sessions` | 200 |

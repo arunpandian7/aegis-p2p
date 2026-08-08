@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createHash } from "node:crypto";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { machines, sessions, usageEvents, toolCalls, attributions, workUnits } from "@/db/schema";
 import { costOf } from "@/lib/pricing";
@@ -15,9 +15,37 @@ import { publish } from "@/lib/stream";
  * (session_id, seq): re-sending a session you already sent is a no-op, so
  * there is no partial-write state to get wrong and re-running the client
  * mid-demo cannot double-count.
+ *
+ * The browser collector (`extension/`) posts here too, with the same
+ * idempotency contract but different content: one aggregate event at seq=0 per
+ * conversation, `usage_basis = 'estimated'` and `cost_basis = 'pool'`, so its
+ * token figures can never reach a dollar total. See ADR-0002.
  */
 
 export const maxDuration = 300;
+
+/**
+ * The browser collector posts from an extension service worker, whose origin is
+ * `chrome-extension://<id>`. Only that scheme is answered with CORS headers:
+ * a wildcard would let any page a victim visits replay a leaked ingest key from
+ * their browser, and the Node clients (`client/index.ts`, the scripts) are not
+ * subject to CORS at all, so they lose nothing.
+ */
+function corsHeaders(req: Request): Record<string, string> {
+  const origin = req.headers.get("origin");
+  if (!origin?.startsWith("chrome-extension://")) return {};
+  return {
+    "Access-Control-Allow-Origin": origin,
+    Vary: "Origin",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Max-Age": "86400",
+  };
+}
+
+export function OPTIONS(req: Request) {
+  return new NextResponse(null, { status: 204, headers: corsHeaders(req) });
+}
 
 type IncomingToolCall = { name: string; target: string | null };
 
@@ -37,6 +65,15 @@ type IncomingEvent = {
 
 type IncomingSession = {
   sessionId: string;
+  provider?: "anthropic" | "openai";
+  externalProjectId?: string | null;
+  externalProjectName?: string | null;
+  externalConversationId?: string | null;
+  externalConversationUrl?: string | null;
+  conversationTitle?: string | null;
+  captureMethod?: "transcript" | "extension" | "export" | "compliance_api";
+  usageBasis?: "reported" | "estimated" | "unavailable";
+  contentHash?: string | null;
   cwd?: string | null;
   gitBranch?: string | null;
   ccVersion?: string | null;
@@ -45,6 +82,7 @@ type IncomingSession = {
   surface?: string;
   costBasis?: "dollars" | "pool";
   isPrivate?: boolean;
+  messageCount?: number;
   events: IncomingEvent[];
 };
 
@@ -65,28 +103,46 @@ async function authenticate(req: Request) {
 }
 
 export async function POST(req: Request) {
+  const cors = corsHeaders(req);
+  const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: cors });
+
   const machine = await authenticate(req);
   if (!machine) {
-    return NextResponse.json({ error: "invalid or missing ingest key" }, { status: 401 });
+    return json({ error: "invalid or missing ingest key" }, 401);
   }
 
   let payload: Payload;
   try {
     payload = await req.json();
   } catch {
-    return NextResponse.json({ error: "malformed JSON body" }, { status: 400 });
+    return json({ error: "malformed JSON body" }, 400);
   }
 
   if (!Array.isArray(payload?.sessions)) {
-    return NextResponse.json({ error: "body must contain a sessions array" }, { status: 400 });
+    return json({ error: "body must contain a sessions array" }, 400);
   }
 
   const db = getDb();
   const accepted: string[] = [];
+  const rejected: { sessionId: string | null; reason: string }[] = [];
   let eventsWritten = 0;
 
   for (const incoming of payload.sessions) {
-    if (!incoming?.sessionId || !Array.isArray(incoming.events)) continue;
+    if (!incoming?.sessionId || !Array.isArray(incoming.events)) {
+      rejected.push({ sessionId: incoming?.sessionId ?? null, reason: "missing sessionId or events" });
+      continue;
+    }
+
+    // A bad timestamp would otherwise reach Postgres as `Invalid Date` and fail
+    // the whole request, taking every other session in the batch with it. The
+    // browser collector reads its timestamps out of the DOM, so this is a real
+    // input, not a theoretical one.
+    const startedAt = new Date(incoming.startedAt);
+    const endedAt = new Date(incoming.endedAt);
+    if (!Number.isFinite(startedAt.getTime()) || !Number.isFinite(endedAt.getTime())) {
+      rejected.push({ sessionId: incoming.sessionId, reason: "startedAt or endedAt is not a valid date" });
+      continue;
+    }
 
     // Resolve attribution up front so it lands with the session row.
     const attr = attribute({ gitBranch: incoming.gitBranch, cwd: incoming.cwd });
@@ -162,8 +218,17 @@ export async function POST(req: Request) {
       repo: incoming.cwd?.split("/").pop() ?? null,
       gitBranch: incoming.gitBranch ?? null,
       ccVersion: incoming.ccVersion ?? null,
-      startedAt: new Date(incoming.startedAt),
-      endedAt: new Date(incoming.endedAt),
+      provider: incoming.provider ?? "anthropic",
+      externalProjectId: incoming.externalProjectId ?? null,
+      externalProjectName: incoming.externalProjectName ?? null,
+      externalConversationId: incoming.externalConversationId ?? null,
+      externalConversationUrl: incoming.externalConversationUrl ?? null,
+      conversationTitle: incoming.conversationTitle ?? null,
+      captureMethod: incoming.captureMethod ?? "transcript",
+      usageBasis: incoming.usageBasis ?? "reported",
+      contentHash: incoming.contentHash ?? null,
+      startedAt,
+      endedAt,
       workUnitId,
       attributionMethod: attr.method,
       attributionConfidence: attr.confidence,
@@ -174,7 +239,11 @@ export async function POST(req: Request) {
       totalOutputTokens: totals.output,
       totalCacheReadTokens: totals.cacheRead,
       totalCacheWriteTokens: totals.cacheWrite,
-      messageCount: incoming.events.length,
+      // Transcript sessions have one event per message; a web conversation is a
+      // single aggregate event, so the collector reports the count separately.
+      messageCount: Number.isFinite(incoming.messageCount)
+        ? Math.max(0, Math.trunc(incoming.messageCount as number))
+        : incoming.events.length,
       toolCallCount: totals.tools,
       isSeeded: false,
     };
@@ -187,14 +256,28 @@ export async function POST(req: Request) {
     if (eventRows.length) {
       // (sessionId, seq) is unique, so a replay of an already-ingested slice
       // updates in place instead of duplicating.
+      //
+      // Every mutable column takes its value from `excluded` — the row we tried
+      // to insert. Setting them from the table's own columns is a no-op that
+      // reads like an update: harmless while a transcript slice is immutable,
+      // silently wrong for the browser collector, whose single seq=0 event
+      // grows with the conversation and must overwrite its predecessor.
       await db
         .insert(usageEvents)
         .values(eventRows)
         .onConflictDoUpdate({
           target: [usageEvents.sessionId, usageEvents.seq],
           set: {
-            costUsd: usageEvents.costUsd,
-            model: usageEvents.model,
+            requestId: sql`excluded.request_id`,
+            ts: sql`excluded.ts`,
+            model: sql`excluded.model`,
+            inputTokens: sql`excluded.input_tokens`,
+            outputTokens: sql`excluded.output_tokens`,
+            cacheReadTokens: sql`excluded.cache_read_tokens`,
+            cacheWrite5mTokens: sql`excluded.cache_write_5m_tokens`,
+            cacheWrite1hTokens: sql`excluded.cache_write_1h_tokens`,
+            iterations: sql`excluded.iterations`,
+            costUsd: sql`excluded.cost_usd`,
           },
         });
       eventsWritten += eventRows.length;
@@ -202,14 +285,15 @@ export async function POST(req: Request) {
 
     // Tool calls have no natural unique key, so replace the session's set
     // wholesale rather than trying to dedupe row by row.
+    await db.delete(toolCalls).where(eq(toolCalls.sessionId, incoming.sessionId));
     if (toolRows.length) {
-      await db.delete(toolCalls).where(eq(toolCalls.sessionId, incoming.sessionId));
       await db.insert(toolCalls).values(toolRows);
     }
 
-    // The audit trail records *changes*, not observations. The client replays
-    // whole transcripts on every run, so appending unconditionally would grow
-    // this table without ever saying anything new.
+    // The audit trail records *changes*, not observations. Both collectors
+    // replay whole conversations on every run — a transcript file for Claude
+    // Code, a growing chat for the extension — so appending unconditionally
+    // would grow this table without ever saying anything new.
     const [latest] = await db
       .select({
         workUnitId: attributions.workUnitId,
@@ -245,16 +329,17 @@ export async function POST(req: Request) {
       repo: sessionRow.repo,
       branch: sessionRow.gitBranch,
       costUsd: totals.cost,
-      messages: incoming.events.length,
+      messages: sessionRow.messageCount,
       attribution: `${attr.method}/${attr.confidence}`,
     });
   }
 
   await db.update(machines).set({ lastSeenAt: new Date() }).where(eq(machines.id, machine.id));
 
-  return NextResponse.json({
+  return json({
     accepted: accepted.length,
     events: eventsWritten,
     sessionIds: accepted,
+    rejected,
   });
 }
