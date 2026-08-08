@@ -27,10 +27,14 @@ function createDb() {
   const client = postgres(url, {
     // Transaction-mode poolers cannot cache prepared statements.
     prepare: false,
-    // One connection per instance. Invocations are short and the pooler
-    // multiplexes; a larger pool just holds slots other instances need.
-    max: 1,
-    idle_timeout: 20,
+    // Fluid Compute reuses one instance across concurrent requests, so this
+    // pool is shared by all of them. max: 1 serialises every concurrent
+    // request behind a single connection and they pile up until the runtime
+    // timeout — the pool has to be wider than one.
+    max: 8,
+    // Release back to the pooler quickly; idle connections here are slots
+    // other instances cannot use.
+    idle_timeout: 10,
     connect_timeout: 15,
   });
 
