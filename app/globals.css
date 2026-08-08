@@ -1,14 +1,31 @@
 @import "tailwindcss";
 
+/*
+ * Dark is a deliberate selection, not an inverted light theme: the surfaces and
+ * status steps below are the validated dark-mode set, each clearing 3:1 against
+ * the dark chart surface.
+ *
+ * Status colors are reserved. They mark state (over budget / within band) and
+ * are never reused as series colors — and they never carry meaning alone: every
+ * status mark ships beside a text label such as "18x median".
+ */
 @theme {
-  --color-ink: #0b0d10;
-  --color-panel: #14171c;
-  --color-edge: #232830;
-  --color-muted: #8b95a5;
-  --color-text: #e6e9ee;
-  --color-accent: #d8b26a;
-  --color-hot: #d9534f;
-  --color-cool: #5aa9a3;
+  --color-ink: #121211; /* page ground, recessive to the surface */
+  --color-surface: #1a1a19; /* validated dark chart surface */
+  --color-edge: #2b2b29;
+  --color-text: #ececea; /* primary ink */
+  --color-dim: #a3a39d; /* secondary ink */
+  --color-muted: #74746e; /* tertiary ink — axes, grid labels */
+
+  --color-good: #0ca30c;
+  --color-warning: #fab219;
+  --color-serious: #ec835a;
+  --color-critical: #d03b3b;
+
+  /* Neutral mark for magnitude bars that carry no status. */
+  --color-mark: #5b7fa6;
+  --color-band: #33332f; /* cohort band fill — recessive */
+
   --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
 }
 
@@ -16,15 +33,16 @@ html,
 body {
   background: var(--color-ink);
   color: var(--color-text);
-  font-family:
-    ui-sans-serif,
-    system-ui,
-    -apple-system,
-    "Segoe UI",
-    sans-serif;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 
+/* Numerals must align in columns for scanning. */
 .tabular {
   font-variant-numeric: tabular-nums;
+}
+
+/* 4px rounded data-end anchored to the baseline; the origin end stays square. */
+.bar-end {
+  border-radius: 0 4px 4px 0;
 }

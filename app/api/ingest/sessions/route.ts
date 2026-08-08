@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createHash } from "node:crypto";
-import { eq, and } from "drizzle-orm";
+import { eq, desc } from "drizzle-orm";
 import { getDb } from "@/db";
 import { machines, sessions, usageEvents, toolCalls, attributions, workUnits } from "@/db/schema";
 import { costOf } from "@/lib/pricing";
@@ -207,14 +207,36 @@ export async function POST(req: Request) {
       await db.insert(toolCalls).values(toolRows);
     }
 
-    await db.insert(attributions).values({
-      sessionId: incoming.sessionId,
-      workUnitId,
-      method: attr.method,
-      confidence: attr.confidence,
-      actor: "system",
-      rationale: attr.rationale,
-    });
+    // The audit trail records *changes*, not observations. The client replays
+    // whole transcripts on every run, so appending unconditionally would grow
+    // this table without ever saying anything new.
+    const [latest] = await db
+      .select({
+        workUnitId: attributions.workUnitId,
+        method: attributions.method,
+        confidence: attributions.confidence,
+      })
+      .from(attributions)
+      .where(eq(attributions.sessionId, incoming.sessionId))
+      .orderBy(desc(attributions.createdAt), desc(attributions.id))
+      .limit(1);
+
+    const changed =
+      !latest ||
+      latest.workUnitId !== workUnitId ||
+      latest.method !== attr.method ||
+      latest.confidence !== attr.confidence;
+
+    if (changed) {
+      await db.insert(attributions).values({
+        sessionId: incoming.sessionId,
+        workUnitId,
+        method: attr.method,
+        confidence: attr.confidence,
+        actor: "system",
+        rationale: attr.rationale,
+      });
+    }
 
     accepted.push(incoming.sessionId);
     publish({

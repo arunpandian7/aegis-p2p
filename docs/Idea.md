@@ -167,6 +167,9 @@ Saying "point estimates are dishonest, here's a distribution" is a credibility m
 
 ## 7. Open items
 
+> Several items below are now resolved — see [DECISIONS.md](./DECISIONS.md) ADR-0001
+> (surface scope, cached-token handling, `cwd`→branch→issue resolution).
+
 ### 🔴 Resolve before pitching
 - [ ] **Anthropic overlap.** Their console ships per-user cost, spend limits, analytics chat. Have a one-sentence answer ready: *"They measure the person and the day. We measure the work."* Expect this question from Anthropic mentors specifically.
 - [ ] Seed data must feel real. Invented-looking traces kill the pitch.

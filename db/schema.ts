@@ -1,5 +1,5 @@
 import {
-  pgTable,
+  pgSchema,
   text,
   integer,
   bigint,
@@ -25,6 +25,14 @@ import {
  *     finance, so the distinction is not optional.
  */
 
+/**
+ * Everything lives in its own `aegis` schema rather than `public`. The host
+ * project has its own tables (including a `users` table that would otherwise
+ * collide), and an isolated schema means `DROP SCHEMA aegis CASCADE` removes
+ * every trace of this app without touching anything else.
+ */
+export const aegis = pgSchema("aegis");
+
 export const attributionMethods = [
   "explicit", // issue key injected at session start
   "branch", // git branch matched ENG-\d+
@@ -36,7 +44,7 @@ export const attributionMethods = [
 
 export const confidenceLevels = ["high", "medium", "low", "none"] as const;
 
-export const machines = pgTable("machines", {
+export const machines = aegis.table("machines", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   userId: text("user_id").references(() => users.id),
@@ -46,13 +54,13 @@ export const machines = pgTable("machines", {
   lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
 });
 
-export const users = pgTable("users", {
+export const users = aegis.table("users", {
   id: text("id").primaryKey(),
   email: text("email").notNull(),
   displayName: text("display_name").notNull(),
 });
 
-export const workUnits = pgTable(
+export const workUnits = aegis.table(
   "work_units",
   {
     id: text("id").primaryKey(),
@@ -78,7 +86,7 @@ export const workUnits = pgTable(
   (t) => [uniqueIndex("work_units_identifier_idx").on(t.identifier)],
 );
 
-export const sessions = pgTable(
+export const sessions = aegis.table(
   "sessions",
   {
     /** Claude Code's own sessionId — the natural key, so replays are idempotent. */
@@ -120,7 +128,7 @@ export const sessions = pgTable(
   ],
 );
 
-export const usageEvents = pgTable(
+export const usageEvents = aegis.table(
   "usage_events",
   {
     id: serial("id").primaryKey(),
@@ -150,7 +158,7 @@ export const usageEvents = pgTable(
   ],
 );
 
-export const toolCalls = pgTable(
+export const toolCalls = aegis.table(
   "tool_calls",
   {
     id: serial("id").primaryKey(),
@@ -171,7 +179,7 @@ export const toolCalls = pgTable(
 );
 
 /** Audit trail: who attributed what, when, and how. Never overwritten. */
-export const attributions = pgTable("attributions", {
+export const attributions = aegis.table("attributions", {
   id: serial("id").primaryKey(),
   sessionId: text("session_id")
     .notNull()
@@ -186,7 +194,7 @@ export const attributions = pgTable("attributions", {
 });
 
 /** Cached explainer output, so the demo never waits on a cold model call. */
-export const explanations = pgTable("explanations", {
+export const explanations = aegis.table("explanations", {
   id: serial("id").primaryKey(),
   workUnitId: text("work_unit_id")
     .notNull()
