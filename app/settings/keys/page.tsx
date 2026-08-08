@@ -64,7 +64,7 @@ export default async function KeysPage() {
 pnpm exec dotenv -e .env.local -- pnpm exec tsx scripts/bootstrap.ts
 
 # then, on any machine:
-export AEGIS_URL=https://your-deployment.vercel.app
+export AEGIS_URL=https://aegis-p2p.vercel.app
 export AEGIS_KEY=aegis_mk_...
 pnpm client            # send
 pnpm client --dry      # parse and summarise without sending`}
