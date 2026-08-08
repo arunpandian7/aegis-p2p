@@ -15,11 +15,23 @@ function createDb() {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL is not set");
 
+  if (url.includes(".pooler.supabase.com:5432")) {
+    // Session mode dedicates a Postgres connection to each client for its whole
+    // life, so serverless invocations exhaust the pool (EMAXCONNSESSION at 15)
+    // rather than queueing. Fail loudly here instead of at random under load.
+    throw new Error(
+      "DATABASE_URL points at the session-mode pooler (:5432). Use the transaction pooler (:6543).",
+    );
+  }
+
   const client = postgres(url, {
     // Transaction-mode poolers cannot cache prepared statements.
     prepare: false,
-    max: 3,
+    // One connection per instance. Invocations are short and the pooler
+    // multiplexes; a larger pool just holds slots other instances need.
+    max: 1,
     idle_timeout: 20,
+    connect_timeout: 15,
   });
 
   return drizzle(client, { schema });
