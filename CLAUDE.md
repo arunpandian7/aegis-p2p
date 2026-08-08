@@ -11,7 +11,9 @@ reasoning: [docs/DECISIONS.md](docs/DECISIONS.md).
 ## Stack
 
 Next.js 15 (App Router) · Drizzle · Supabase Postgres · Tailwind v4 ·
-`@anthropic-ai/sdk`. Deployed on Vercel (`jeevas-projects-633d7cd6/aegis-p2p`).
+`@anthropic-ai/sdk`. Deployed on Vercel
+(`arun-pandian-rs-projects/aegis-p2p` → <https://aegis-p2p.vercel.app>),
+connected to the GitHub repo, so a push to `main` deploys.
 
 **Use `pnpm`, never npm or npx.**
 
