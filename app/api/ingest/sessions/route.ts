@@ -248,10 +248,38 @@ export async function POST(req: Request) {
       isSeeded: false,
     };
 
+    /**
+     * A replay refreshes measurements, never decisions.
+     *
+     * `set: sessionRow` would write the freshly *inferred* attribution over
+     * whatever is already there — so tagging a session on /me and then
+     * re-running the collector silently un-tagged it and un-marked it private.
+     * Rare with transcripts, which are usually replayed once; constant with the
+     * browser collector, which re-syncs every time a conversation grows.
+     *
+     * So: if the stored row carries a human decision — `tagged` or `explicit`,
+     * the two methods at the top of the ladder in `lib/attribution.ts` — its
+     * work unit, method, confidence and privacy flag survive the write. Nothing
+     * the engineer chose is overwritten by something we guessed.
+     */
+    const keepIfHuman = <T>(column: T, incomingValue: unknown) =>
+      sql`case when ${sessions.attributionMethod} in ('tagged', 'explicit')
+               then ${column}
+               else ${incomingValue} end`;
+
     await db
       .insert(sessions)
       .values(sessionRow)
-      .onConflictDoUpdate({ target: sessions.id, set: sessionRow });
+      .onConflictDoUpdate({
+        target: sessions.id,
+        set: {
+          ...sessionRow,
+          workUnitId: keepIfHuman(sessions.workUnitId, workUnitId),
+          attributionMethod: keepIfHuman(sessions.attributionMethod, attr.method),
+          attributionConfidence: keepIfHuman(sessions.attributionConfidence, attr.confidence),
+          isPrivate: keepIfHuman(sessions.isPrivate, sessionRow.isPrivate),
+        },
+      });
 
     if (eventRows.length) {
       // (sessionId, seq) is unique, so a replay of an already-ingested slice
@@ -305,11 +333,18 @@ export async function POST(req: Request) {
       .orderBy(desc(attributions.createdAt), desc(attributions.id))
       .limit(1);
 
+    // Matches what the upsert above preserved: where an engineer has decided,
+    // a replay that infers `none` is not a change of mind, it is the collector
+    // running again. Recording it would write a retraction into the audit trail
+    // that nobody performed.
+    const humanDecision = latest?.method === "tagged" || latest?.method === "explicit";
+
     const changed =
-      !latest ||
-      latest.workUnitId !== workUnitId ||
-      latest.method !== attr.method ||
-      latest.confidence !== attr.confidence;
+      !humanDecision &&
+      (!latest ||
+        latest.workUnitId !== workUnitId ||
+        latest.method !== attr.method ||
+        latest.confidence !== attr.confidence);
 
     if (changed) {
       await db.insert(attributions).values({
@@ -330,7 +365,11 @@ export async function POST(req: Request) {
       branch: sessionRow.gitBranch,
       costUsd: totals.cost,
       messages: sessionRow.messageCount,
-      attribution: `${attr.method}/${attr.confidence}`,
+      // Report what the row now carries, not what this replay inferred — a
+      // tagged session that just re-synced is still tagged.
+      attribution: humanDecision
+        ? `${latest.method}/${latest.confidence}`
+        : `${attr.method}/${attr.confidence}`,
     });
   }
 

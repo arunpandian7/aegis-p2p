@@ -102,13 +102,61 @@ export async function getIssue(identifier: string) {
   return rows[0] ?? null;
 }
 
+/**
+ * The dollar-denominated sessions on an issue.
+ *
+ * `cost_basis` is in the WHERE clause, not left to the caller: a pool row costs
+ * $0 because its model has no rate, so it would slip into a cost table looking
+ * like a free session rather than an unpriceable one. Pool rows have their own
+ * query below and their own block in the UI.
+ */
 export async function sessionsForIssue(workUnitId: string) {
   const db = getDb();
   return db
     .select()
     .from(sessions)
-    .where(and(eq(sessions.workUnitId, workUnitId), eq(sessions.isPrivate, false)))
+    .where(
+      and(
+        eq(sessions.workUnitId, workUnitId),
+        eq(sessions.isPrivate, false),
+        eq(sessions.costBasis, "dollars"),
+      ),
+    )
     .orderBy(desc(sessions.totalCostUsd));
+}
+
+/**
+ * Pool-basis sessions an engineer has tagged onto an issue — today, Claude and
+ * ChatGPT web conversations from the browser collector.
+ *
+ * Ordered by estimated tokens rather than cost, because there is no cost. These
+ * rows are never summed with the dollars above; see ADR-0002.
+ */
+export async function poolSessionsForIssue(workUnitId: string) {
+  const db = getDb();
+  return db
+    .select({
+      id: sessions.id,
+      provider: sessions.provider,
+      surface: sessions.surface,
+      conversationTitle: sessions.conversationTitle,
+      externalProjectName: sessions.externalProjectName,
+      externalConversationUrl: sessions.externalConversationUrl,
+      messageCount: sessions.messageCount,
+      totalInputTokens: sessions.totalInputTokens,
+      totalOutputTokens: sessions.totalOutputTokens,
+      usageBasis: sessions.usageBasis,
+      endedAt: sessions.endedAt,
+    })
+    .from(sessions)
+    .where(
+      and(
+        eq(sessions.workUnitId, workUnitId),
+        eq(sessions.isPrivate, false),
+        eq(sessions.costBasis, "pool"),
+      ),
+    )
+    .orderBy(desc(sql`${sessions.totalInputTokens} + ${sessions.totalOutputTokens}`));
 }
 
 export async function getSession(id: string) {

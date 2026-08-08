@@ -3,7 +3,7 @@ import Link from "next/link";
 import { desc, eq, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
 import { explanations, toolCalls } from "@/db/schema";
-import { getIssue, sessionsForIssue, cohortBands } from "@/lib/queries";
+import { getIssue, sessionsForIssue, poolSessionsForIssue, cohortBands } from "@/lib/queries";
 import { confidenceMix } from "@/lib/attribution";
 import { Stat, CostBar, OutlierTag, AttributionChip, usd } from "@/components/cost";
 import { Explainer } from "@/components/explainer";
@@ -20,8 +20,9 @@ export default async function IssuePage({
   if (!issue) notFound();
 
   const db = getDb();
-  const [rows, bands, cached] = await Promise.all([
+  const [rows, pool, bands, cached] = await Promise.all([
     sessionsForIssue(issue.id),
+    poolSessionsForIssue(issue.id),
     cohortBands(),
     db
       .select()
@@ -91,8 +92,12 @@ export default async function IssuePage({
         />
         <Stat
           label="Cost basis"
-          value={rows.every((r) => r.costBasis === "dollars") ? "dollars" : "mixed"}
-          sub="pool rows never sum in"
+          value={pool.length ? "dollars + pool" : "dollars"}
+          sub={
+            pool.length
+              ? `${pool.length} pool row${pool.length === 1 ? "" : "s"}, never summed in`
+              : "pool rows never sum in"
+          }
         />
       </div>
 
@@ -172,6 +177,57 @@ export default async function IssuePage({
           </tbody>
         </table>
       </section>
+
+      {/*
+       * Pool-basis work, kept in its own block rather than a fourth column on
+       * the table above. There is no dollar figure to put in that column: the
+       * web collector estimates tokens from characters and the model has no
+       * rate, so a $0.00 in a cost table would read as "this was free" when it
+       * means "this is unpriceable". Different unit, different section.
+       */}
+      {pool.length ? (
+        <section className="rounded-lg border border-[var(--color-edge)]">
+          <div className="border-b border-[var(--color-edge)] bg-[var(--color-surface)] px-4 py-3">
+            <h2 className="font-medium">Web chats</h2>
+            <p className="mt-0.5 text-xs text-[var(--color-muted)]">
+              Claude and ChatGPT conversations the engineer tagged onto this issue. Counted in
+              estimated tokens on a pool basis — <strong>not included</strong> in the{" "}
+              {usd(cost)} above, and not priced at all. See ADR-0002.
+            </p>
+          </div>
+          <table className="w-full text-sm">
+            <tbody>
+              {pool.map((s) => {
+                const tokens = s.totalInputTokens + s.totalOutputTokens;
+                return (
+                  <tr key={s.id} className="border-b border-[var(--color-edge)] last:border-0">
+                    <td className="px-4 py-3">
+                      <span className="text-sm">
+                        {s.conversationTitle ?? "Untitled conversation"}
+                      </span>
+                      <div className="mt-0.5 text-xs text-[var(--color-muted)]">
+                        {s.provider === "openai" ? "ChatGPT" : "Claude"} ·{" "}
+                        {s.externalProjectName ?? "Unfiled"} · {s.messageCount} msgs
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className="rounded-full border border-[var(--color-edge)] px-2 py-0.5 text-xs text-[var(--color-dim)]">
+                        {s.usageBasis}
+                      </span>
+                    </td>
+                    <td className="tabular px-4 py-3 text-right font-medium">
+                      {tokens.toLocaleString()}
+                      <span className="ml-1 text-xs font-normal text-[var(--color-muted)]">
+                        est. tok
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </section>
+      ) : null}
     </div>
   );
 }

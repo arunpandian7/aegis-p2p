@@ -195,7 +195,8 @@ and generated key, review the disclosure, enable capture, then reload an open pr
 - `pnpm install --frozen-lockfile` was rejected by the development environment's minimum package-age
   policy because 25 existing lockfile entries were too newly published. The policy was not bypassed.
 - Consequently, no full TypeScript check or Next production build ran.
-- No database-backed end-to-end test ran because no `DATABASE_URL` was provisioned.
+- ~~No database-backed end-to-end test ran.~~ `scripts/e2e-web-ingest.mts` now covers ingest → replay →
+  tag → replay → render against a live server and database. Run it with `pnpm dev` up.
 - No live logged-in Claude/ChatGPT smoke test ran.
 
 ## Known risks and deliberate cuts

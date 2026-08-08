@@ -10,6 +10,10 @@ export type ProjectSession = {
   totalInputTokens: number;
   totalOutputTokens: number;
   usageBasis: string;
+  /** Set once the engineer tags the conversation onto a work unit. */
+  workUnitId: string | null;
+  issueIdentifier: string | null;
+  issueTitle: string | null;
 };
 
 export type ProjectConversation = {
@@ -18,6 +22,10 @@ export type ProjectConversation = {
   url: string | null;
   endedAt: Date | null;
   messageCount: number;
+  estimatedTokens: number;
+  workUnitId: string | null;
+  issueIdentifier: string | null;
+  issueTitle: string | null;
 };
 
 export type ProjectRollup = {
@@ -31,6 +39,8 @@ export type ProjectRollup = {
   estimatedTokens: number;
   lastActivityAt: Date | null;
   usageIsEstimated: boolean;
+  /** Conversations the engineer has tagged onto a work unit. */
+  taggedCount: number;
   conversations: ProjectConversation[];
 };
 
@@ -61,6 +71,7 @@ export function rollUpProjects(rows: ProjectSession[]): ProjectRollup[] {
       estimatedTokens: 0,
       lastActivityAt: null,
       usageIsEstimated: false,
+      taggedCount: 0,
       conversations: [],
     };
 
@@ -73,12 +84,17 @@ export function rollUpProjects(rows: ProjectSession[]): ProjectRollup[] {
     project.estimatedTokens += row.totalInputTokens + row.totalOutputTokens;
     project.lastActivityAt = newest(project.lastActivityAt, row.endedAt);
     project.usageIsEstimated ||= row.usageBasis === "estimated";
+    if (row.workUnitId) project.taggedCount++;
     project.conversations.push({
       id: row.id,
       title: row.conversationTitle ?? "Untitled conversation",
       url: row.externalConversationUrl,
       endedAt: row.endedAt,
       messageCount: row.messageCount,
+      estimatedTokens: row.totalInputTokens + row.totalOutputTokens,
+      workUnitId: row.workUnitId,
+      issueIdentifier: row.issueIdentifier,
+      issueTitle: row.issueTitle,
     });
     projects.set(key, project);
   }

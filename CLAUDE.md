@@ -33,6 +33,9 @@ pnpm exec dotenv -e .env.local -- pnpm exec tsx client/index.ts   # ingest
 pnpm exec tsx client/index.ts --dry                                # parse only
 
 pnpm test:extension                       # browser collector unit tests, no deps needed
+
+# needs `pnpm dev` running; creates and deletes its own machine and session
+pnpm exec dotenv -e .env.local -- pnpm exec tsx scripts/e2e-web-ingest.mts
 ```
 
 Only Next.js auto-loads `.env.local`. Every script needs the `dotenv -e` prefix.
@@ -107,6 +110,12 @@ is what makes it answerable when someone probes it.
 **6. Ingest is idempotent on `(session_id, seq)`.** The client keeps no cursor
 and replays whole transcripts every run. Anything added to the ingest path must
 preserve that — it is why re-running the collector mid-demo is safe.
+
+**6b. A replay refreshes measurements, never decisions.** Where a session already
+carries `tagged` or `explicit`, its work unit, method, confidence and
+`is_private` survive the upsert untouched, and no inferred attribution is
+appended to the audit trail. An engineer's confirmation outranks anything we
+infer — including on the second ingest.
 
 **7. The explainer never generates a number.** `lib/signals.ts` computes; Claude
 writes sentences around computed values. If you add a figure to the prose, add

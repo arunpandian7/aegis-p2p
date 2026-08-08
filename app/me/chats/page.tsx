@@ -1,57 +1,75 @@
 import Link from "next/link";
-import { and, desc, eq, or } from "drizzle-orm";
+import { and, asc, desc, eq, or } from "drizzle-orm";
 import { getDb } from "@/db";
-import { sessions } from "@/db/schema";
+import { sessions, workUnits } from "@/db/schema";
 import { rollUpProjects, type ProjectRollup, type ProjectSession } from "@/lib/projects";
 import { Stat } from "@/components/cost";
+import { TagChat } from "@/components/tag-chat";
 
 export const dynamic = "force-dynamic";
 
 /** Same stand-in owner as /me, until there is an application login. */
 const DEMO_USER = "u_arun";
 
+type Issue = { id: string; identifier: string; title: string };
+
 type LoadResult =
-  | { state: "ready"; projects: ProjectRollup[] }
-  | { state: "unconfigured"; projects: [] }
-  | { state: "error"; projects: [] };
+  | { state: "ready"; projects: ProjectRollup[]; issues: Issue[] }
+  | { state: "unconfigured"; projects: []; issues: [] }
+  | { state: "error"; projects: []; issues: [] };
 
 async function loadProjects(): Promise<LoadResult> {
-  if (!process.env.DATABASE_URL) return { state: "unconfigured", projects: [] };
+  if (!process.env.DATABASE_URL) return { state: "unconfigured", projects: [], issues: [] };
 
   try {
     const db = getDb();
-    const rows: ProjectSession[] = await db
-      .select({
-        id: sessions.id,
-        provider: sessions.provider,
-        externalProjectId: sessions.externalProjectId,
-        externalProjectName: sessions.externalProjectName,
-        externalConversationUrl: sessions.externalConversationUrl,
-        conversationTitle: sessions.conversationTitle,
-        endedAt: sessions.endedAt,
-        messageCount: sessions.messageCount,
-        totalInputTokens: sessions.totalInputTokens,
-        totalOutputTokens: sessions.totalOutputTokens,
-        usageBasis: sessions.usageBasis,
-      })
-      .from(sessions)
-      // Scoped to the owner, not just to `is_private`: this page is the private
-      // view, so the filter that keeps one engineer's chats out of another's
-      // belongs in the query, the same way the team aggregates exclude private
-      // rows in `lib/queries.ts` rather than in the markup.
-      .where(
-        and(
-          eq(sessions.userId, DEMO_USER),
-          eq(sessions.isPrivate, true),
-          or(eq(sessions.surface, "claude_web"), eq(sessions.surface, "chatgpt_web")),
-        ),
-      )
-      .orderBy(desc(sessions.endedAt))
-      .limit(500);
-    return { state: "ready", projects: rollUpProjects(rows) };
+    const [rows, issues] = await Promise.all([
+      db
+        .select({
+          id: sessions.id,
+          provider: sessions.provider,
+          externalProjectId: sessions.externalProjectId,
+          externalProjectName: sessions.externalProjectName,
+          externalConversationUrl: sessions.externalConversationUrl,
+          conversationTitle: sessions.conversationTitle,
+          endedAt: sessions.endedAt,
+          messageCount: sessions.messageCount,
+          totalInputTokens: sessions.totalInputTokens,
+          totalOutputTokens: sessions.totalOutputTokens,
+          usageBasis: sessions.usageBasis,
+          workUnitId: sessions.workUnitId,
+          issueIdentifier: workUnits.identifier,
+          issueTitle: workUnits.title,
+        })
+        .from(sessions)
+        .leftJoin(workUnits, eq(sessions.workUnitId, workUnits.id))
+        // Scoped to the owner: this is a personal view, so the filter that keeps
+        // one engineer's chats out of another's belongs in the query, the same
+        // way team aggregates exclude private rows in `lib/queries.ts` rather
+        // than in the markup.
+        //
+        // Deliberately *not* filtered on `is_private`. Tagging a chat onto an
+        // issue clears that flag, and a conversation vanishing from your own
+        // page the moment you publish it is the kind of surprise that stops
+        // people publishing. Tagged rows stay here, showing where they went.
+        .where(
+          and(
+            eq(sessions.userId, DEMO_USER),
+            or(eq(sessions.surface, "claude_web"), eq(sessions.surface, "chatgpt_web")),
+          ),
+        )
+        .orderBy(desc(sessions.endedAt))
+        .limit(500),
+      db
+        .select({ id: workUnits.id, identifier: workUnits.identifier, title: workUnits.title })
+        .from(workUnits)
+        .orderBy(asc(workUnits.identifier)),
+    ]);
+
+    return { state: "ready", projects: rollUpProjects(rows as ProjectSession[]), issues };
   } catch (error) {
     console.error("Could not load browser projects", error);
-    return { state: "error", projects: [] };
+    return { state: "error", projects: [], issues: [] };
   }
 }
 
@@ -91,6 +109,7 @@ export default async function MyChatsPage() {
   const conversations = projects.reduce((total, project) => total + project.conversationCount, 0);
   const messages = projects.reduce((total, project) => total + project.messageCount, 0);
   const tokens = projects.reduce((total, project) => total + project.estimatedTokens, 0);
+  const tagged = projects.reduce((total, project) => total + project.taggedCount, 0);
 
   return (
     <div className="space-y-6">
@@ -107,13 +126,23 @@ export default async function MyChatsPage() {
           </Link>{" "}
           for the API-priced side.
         </p>
+        <p className="mt-2 max-w-2xl text-sm text-[var(--color-dim)]">
+          Nothing here reaches the team board on its own. <em>Tag to issue</em> publishes one
+          conversation, as <code>tagged</code>, and it appears on that issue in estimated tokens
+          beside the dollar figure — never inside it.
+        </p>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
         <Stat label="Projects" value={number(trackedProjects)} sub="provider-native" />
         <Stat label="Conversations" value={number(conversations)} sub="tracked" />
         <Stat label="Messages" value={number(messages)} sub="counted, not stored" />
         <Stat label="Est. tokens" value={number(tokens)} sub="characters ÷ 4, no cost" />
+        <Stat
+          label="Tagged"
+          value={number(tagged)}
+          sub={tagged ? "on the board, as tokens" : "none published"}
+        />
       </div>
 
       {result.state !== "ready" ? (
@@ -167,33 +196,43 @@ export default async function MyChatsPage() {
                 </div>
               </div>
 
-              <div className="mt-4 space-y-2">
+              <div className="mt-4 space-y-1">
                 {project.conversations.slice(0, 3).map((conversation) => {
                   const url = safeConversationUrl(conversation.url);
-                  const content = (
-                    <>
-                      <span className="truncate">{conversation.title}</span>
-                      <span className="tabular shrink-0 text-xs text-[var(--color-muted)]">
-                        {conversation.messageCount} msgs
-                      </span>
-                    </>
-                  );
-                  return url ? (
-                    <a
-                      key={conversation.id}
-                      href={url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="flex items-center justify-between gap-3 rounded px-2 py-1.5 text-sm hover:bg-[var(--color-edge)]"
-                    >
-                      {content}
-                    </a>
-                  ) : (
-                    <div
-                      key={conversation.id}
-                      className="flex items-center justify-between gap-3 px-2 py-1.5 text-sm"
-                    >
-                      {content}
+                  return (
+                    <div key={conversation.id} className="px-2 py-1.5">
+                      <div className="flex items-center justify-between gap-3 text-sm">
+                        {url ? (
+                          <a
+                            href={url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="truncate hover:underline"
+                          >
+                            {conversation.title}
+                          </a>
+                        ) : (
+                          <span className="truncate">{conversation.title}</span>
+                        )}
+                        <span className="tabular shrink-0 text-xs text-[var(--color-muted)]">
+                          {conversation.messageCount} msgs · {number(conversation.estimatedTokens)}{" "}
+                          tok
+                        </span>
+                      </div>
+                      <div className="mt-1">
+                        <TagChat
+                          sessionId={conversation.id}
+                          issues={result.state === "ready" ? result.issues : []}
+                          taggedTo={
+                            conversation.workUnitId
+                              ? {
+                                  identifier: conversation.issueIdentifier,
+                                  title: conversation.issueTitle,
+                                }
+                              : null
+                          }
+                        />
+                      </div>
                     </div>
                   );
                 })}

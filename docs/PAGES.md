@@ -31,6 +31,12 @@ Contains the issue's cost against its cohort band, a link out to Linear, the
 **explainer**, the repeated-target list, and every session attributed to it with
 its attribution mix printed above the table.
 
+The session table is `cost_basis = 'dollars'` only — enforced in
+`sessionsForIssue()`, not by the caller. A pool row costs $0 because its model
+has no rate, so in a cost table it would read as "this was free" rather than
+"this is unpriceable". Pool rows come from `poolSessionsForIssue()` and render
+in their own **Web chats** block, in tokens.
+
 The explainer streams. Press *Explain* and prose arrives token by token; the
 result is cached in `explanations` so re-opening during rehearsal is instant and
 free. See [Explainer](#the-explainer) below.
@@ -79,11 +85,24 @@ a page where a reader could take one total for the other. **No dollar figure
 appears on this page at all** — the tiles count projects, conversations,
 messages and estimated tokens.
 
-The query filters on the owner *and* `is_private`, the same way the team
-aggregates in `lib/queries.ts` filter private rows: in the SQL, not the markup.
-Conversation links are re-validated against `https://claude.ai` and
-`https://chatgpt.com` before rendering, since the URL arrives from a browser
-extension.
+The query filters on the owner, the same way the team aggregates in
+`lib/queries.ts` filter private rows: in the SQL, not the markup. Conversation
+links are re-validated against `https://claude.ai` and `https://chatgpt.com`
+before rendering, since the URL arrives from a browser extension.
+
+**Tag to issue** is the only route from here to a team surface. It posts
+`confirm` to `/api/attribute`, which sets `attribution_method = 'tagged'` and
+clears `is_private` — publishing is the act of clearing it, which is why the
+button says *Publish* and not *Save*. Tagged conversations stay listed here
+showing where they went; *make private* reverses it. There is deliberately no
+*Suggest issue* step as on `/me`: suggesting means sending a session's file and
+command trace to Claude, and a web conversation's only equivalent material is
+its title and project name — user content, sent to a model, to save a dropdown.
+
+A tagged conversation appears on `/issues/[identifier]` in a **Web chats**
+block: its own table, in estimated tokens, below the dollar sessions and never
+added to them. The *Cost basis* tile on that page reads `dollars + pool` when
+any are present.
 
 Terms the collector runs under: [DECISIONS.md](./DECISIONS.md) ADR-0002.
 Architecture and data inventory: [HANDOFF.md](./HANDOFF.md).
@@ -186,6 +205,15 @@ DOM, so a bad one is a real input.
 
 Attribution is resolved on ingest and the audit trail in `attributions` records
 **changes only**; an ingest that resolves to the same answer writes nothing.
+
+**A replay refreshes measurements, never decisions.** Where the stored row
+carries `tagged` or `explicit` — the two human methods at the top of the ladder
+— its work unit, method, confidence and `is_private` survive the upsert, and no
+inferred attribution is appended to the audit trail. Without this, tagging a
+session and then re-running a collector silently un-tagged it; rare with
+transcripts, constant with the browser collector, which re-syncs whenever a
+conversation grows. `scripts/e2e-web-ingest.mts` ingests twice around a tag to
+prove it.
 
 ### `GET /api/explain/[identifier]`
 
