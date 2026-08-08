@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Aegis Project Tracker settings</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body class="options-page">
+    <main class="card options-card">
+      <div class="eyebrow">Aegis browser collector</div>
+      <h1>Track projects, not private prompts</h1>
+      <p class="lede">
+        After one-time consent, Aegis watches open Claude and ChatGPT conversations and syncs their
+        project, title, message count, and estimated token volume automatically.
+      </p>
+
+      <div class="privacy-note">
+        <strong>What leaves this browser</strong>
+        <span>
+          Provider/project IDs and names, conversation ID/title/URL, counts, estimates, and a SHA-256
+          change digest. Prompt and response text, cookies, and site session tokens are never sent.
+        </span>
+      </div>
+
+      <form id="settings-form">
+        <label>
+          <span>Aegis URL</span>
+          <input id="aegis-url" type="url" required placeholder="http://localhost:3000" />
+        </label>
+
+        <label>
+          <span>Ingest key</span>
+          <input id="ingest-key" type="password" required autocomplete="off" placeholder="aegis_mk_…" />
+        </label>
+
+        <label>
+          <span>Collector name</span>
+          <input id="machine-name" type="text" required maxlength="100" placeholder="alan-browser" />
+        </label>
+
+        <label class="consent-row">
+          <input id="enabled" type="checkbox" />
+          <span>
+            Enable automatic capture on <code>claude.ai</code> and <code>chatgpt.com</code>. I understand
+            the metadata listed above is sent to my Aegis server.
+          </span>
+        </label>
+
+        <div class="actions">
+          <button type="submit" class="primary">Save settings</button>
+          <button type="button" id="test-connection">Test connection</button>
+        </div>
+        <p id="status" class="status" aria-live="polite"></p>
+      </form>
+
+      <p class="fine-print">
+        Web subscriptions do not expose authoritative per-message token usage or API cost. Aegis marks
+        these figures as <em>estimated / pool</em>, so they cannot be mixed with billed API dollars.
+      </p>
+    </main>
+    <script src="options.js"></script>
+  </body>
+</html>

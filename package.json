@@ -9,7 +9,9 @@
     "db:push": "dotenv -e .env.local -- drizzle-kit push",
     "db:studio": "dotenv -e .env.local -- drizzle-kit studio",
     "seed": "dotenv -e .env.local -- tsx scripts/seed.ts",
-    "client": "dotenv -e .env.local -- tsx client/index.ts"
+    "machine:create": "dotenv -e .env.local -- tsx scripts/create-machine.ts",
+    "client": "dotenv -e .env.local -- tsx client/index.ts",
+    "test:extension": "node --test extension/test/*.test.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",

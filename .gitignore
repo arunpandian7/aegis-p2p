@@ -6,3 +6,5 @@ next-env.d.ts
 *.tsbuildinfo
 .aegis-cursor.json
 .env*
+!.env.example
+.DS_Store

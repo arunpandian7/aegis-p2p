@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createHash } from "node:crypto";
-import { eq, and } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { machines, sessions, usageEvents, toolCalls, attributions, workUnits } from "@/db/schema";
 import { costOf } from "@/lib/pricing";
@@ -18,6 +18,21 @@ import { publish } from "@/lib/stream";
  */
 
 export const maxDuration = 300;
+
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "Authorization, Content-Type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Max-Age": "86400",
+};
+
+function json(body: unknown, status = 200) {
+  return NextResponse.json(body, { status, headers: CORS_HEADERS });
+}
+
+export function OPTIONS() {
+  return new NextResponse(null, { status: 204, headers: CORS_HEADERS });
+}
 
 type IncomingToolCall = { name: string; target: string | null };
 
@@ -37,6 +52,15 @@ type IncomingEvent = {
 
 type IncomingSession = {
   sessionId: string;
+  provider?: "anthropic" | "openai";
+  externalProjectId?: string | null;
+  externalProjectName?: string | null;
+  externalConversationId?: string | null;
+  externalConversationUrl?: string | null;
+  conversationTitle?: string | null;
+  captureMethod?: "transcript" | "extension" | "export" | "compliance_api";
+  usageBasis?: "reported" | "estimated" | "unavailable";
+  contentHash?: string | null;
   cwd?: string | null;
   gitBranch?: string | null;
   ccVersion?: string | null;
@@ -45,6 +69,7 @@ type IncomingSession = {
   surface?: string;
   costBasis?: "dollars" | "pool";
   isPrivate?: boolean;
+  messageCount?: number;
   events: IncomingEvent[];
 };
 
@@ -67,18 +92,18 @@ async function authenticate(req: Request) {
 export async function POST(req: Request) {
   const machine = await authenticate(req);
   if (!machine) {
-    return NextResponse.json({ error: "invalid or missing ingest key" }, { status: 401 });
+    return json({ error: "invalid or missing ingest key" }, 401);
   }
 
   let payload: Payload;
   try {
     payload = await req.json();
   } catch {
-    return NextResponse.json({ error: "malformed JSON body" }, { status: 400 });
+    return json({ error: "malformed JSON body" }, 400);
   }
 
   if (!Array.isArray(payload?.sessions)) {
-    return NextResponse.json({ error: "body must contain a sessions array" }, { status: 400 });
+    return json({ error: "body must contain a sessions array" }, 400);
   }
 
   const db = getDb();
@@ -87,6 +112,10 @@ export async function POST(req: Request) {
 
   for (const incoming of payload.sessions) {
     if (!incoming?.sessionId || !Array.isArray(incoming.events)) continue;
+
+    const startedAt = new Date(incoming.startedAt);
+    const endedAt = new Date(incoming.endedAt);
+    if (!Number.isFinite(startedAt.getTime()) || !Number.isFinite(endedAt.getTime())) continue;
 
     // Resolve attribution up front so it lands with the session row.
     const attr = attribute({ gitBranch: incoming.gitBranch, cwd: incoming.cwd });
@@ -162,8 +191,17 @@ export async function POST(req: Request) {
       repo: incoming.cwd?.split("/").pop() ?? null,
       gitBranch: incoming.gitBranch ?? null,
       ccVersion: incoming.ccVersion ?? null,
-      startedAt: new Date(incoming.startedAt),
-      endedAt: new Date(incoming.endedAt),
+      provider: incoming.provider ?? "anthropic",
+      externalProjectId: incoming.externalProjectId ?? null,
+      externalProjectName: incoming.externalProjectName ?? null,
+      externalConversationId: incoming.externalConversationId ?? null,
+      externalConversationUrl: incoming.externalConversationUrl ?? null,
+      conversationTitle: incoming.conversationTitle ?? null,
+      captureMethod: incoming.captureMethod ?? "transcript",
+      usageBasis: incoming.usageBasis ?? "reported",
+      contentHash: incoming.contentHash ?? null,
+      startedAt,
+      endedAt,
       workUnitId,
       attributionMethod: attr.method,
       attributionConfidence: attr.confidence,
@@ -174,7 +212,7 @@ export async function POST(req: Request) {
       totalOutputTokens: totals.output,
       totalCacheReadTokens: totals.cacheRead,
       totalCacheWriteTokens: totals.cacheWrite,
-      messageCount: incoming.events.length,
+      messageCount: Math.max(0, Math.trunc(incoming.messageCount ?? incoming.events.length)),
       toolCallCount: totals.tools,
       isSeeded: false,
     };
@@ -193,8 +231,16 @@ export async function POST(req: Request) {
         .onConflictDoUpdate({
           target: [usageEvents.sessionId, usageEvents.seq],
           set: {
-            costUsd: usageEvents.costUsd,
-            model: usageEvents.model,
+            requestId: sql`excluded.request_id`,
+            ts: sql`excluded.ts`,
+            model: sql`excluded.model`,
+            inputTokens: sql`excluded.input_tokens`,
+            outputTokens: sql`excluded.output_tokens`,
+            cacheReadTokens: sql`excluded.cache_read_tokens`,
+            cacheWrite5mTokens: sql`excluded.cache_write_5m_tokens`,
+            cacheWrite1hTokens: sql`excluded.cache_write_1h_tokens`,
+            iterations: sql`excluded.iterations`,
+            costUsd: sql`excluded.cost_usd`,
           },
         });
       eventsWritten += eventRows.length;
@@ -202,19 +248,40 @@ export async function POST(req: Request) {
 
     // Tool calls have no natural unique key, so replace the session's set
     // wholesale rather than trying to dedupe row by row.
+    await db.delete(toolCalls).where(eq(toolCalls.sessionId, incoming.sessionId));
     if (toolRows.length) {
-      await db.delete(toolCalls).where(eq(toolCalls.sessionId, incoming.sessionId));
       await db.insert(toolCalls).values(toolRows);
     }
 
-    await db.insert(attributions).values({
-      sessionId: incoming.sessionId,
-      workUnitId,
-      method: attr.method,
-      confidence: attr.confidence,
-      actor: "system",
-      rationale: attr.rationale,
-    });
+    // Replaying a growing web chat is a sync, not a new attribution decision.
+    // Preserve the audit trail without appending the same decision every time.
+    const previousAttribution = await db
+      .select({
+        workUnitId: attributions.workUnitId,
+        method: attributions.method,
+        confidence: attributions.confidence,
+      })
+      .from(attributions)
+      .where(eq(attributions.sessionId, incoming.sessionId))
+      .orderBy(sql`${attributions.createdAt} desc`)
+      .limit(1);
+
+    const previous = previousAttribution[0];
+    if (
+      !previous ||
+      previous.workUnitId !== workUnitId ||
+      previous.method !== attr.method ||
+      previous.confidence !== attr.confidence
+    ) {
+      await db.insert(attributions).values({
+        sessionId: incoming.sessionId,
+        workUnitId,
+        method: attr.method,
+        confidence: attr.confidence,
+        actor: "system",
+        rationale: attr.rationale,
+      });
+    }
 
     accepted.push(incoming.sessionId);
     publish({
@@ -223,14 +290,14 @@ export async function POST(req: Request) {
       repo: sessionRow.repo,
       branch: sessionRow.gitBranch,
       costUsd: totals.cost,
-      messages: incoming.events.length,
+      messages: sessionRow.messageCount,
       attribution: `${attr.method}/${attr.confidence}`,
     });
   }
 
   await db.update(machines).set({ lastSeenAt: new Date() }).where(eq(machines.id, machine.id));
 
-  return NextResponse.json({
+  return json({
     accepted: accepted.length,
     events: eventsWritten,
     sessionIds: accepted,

@@ -1,0 +1,218 @@
+:root {
+  color-scheme: dark;
+  --ink: #0b0d10;
+  --panel: #14171c;
+  --edge: #2b313b;
+  --muted: #9aa4b3;
+  --text: #edf0f4;
+  --accent: #d8b26a;
+  --cool: #5aa9a3;
+  --hot: #e06a64;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--ink);
+  color: var(--text);
+}
+
+.options-page {
+  min-height: 100vh;
+  padding: 48px 20px;
+}
+
+.popup-page {
+  width: 360px;
+  padding: 12px;
+}
+
+.card {
+  border: 1px solid var(--edge);
+  border-radius: 16px;
+  background: var(--panel);
+  box-shadow: 0 18px 60px rgb(0 0 0 / 28%);
+}
+
+.options-card {
+  max-width: 700px;
+  margin: 0 auto;
+  padding: 32px;
+}
+
+.popup-card {
+  padding: 18px;
+}
+
+.eyebrow {
+  color: var(--accent);
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+h1 {
+  margin: 8px 0 10px;
+  font-size: 26px;
+  letter-spacing: -0.03em;
+}
+
+.popup-card h1 {
+  margin: 4px 0 0;
+  font-size: 18px;
+}
+
+.lede,
+.fine-print {
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.privacy-note {
+  display: grid;
+  gap: 7px;
+  margin: 24px 0;
+  padding: 16px;
+  border-left: 3px solid var(--cool);
+  background: rgb(90 169 163 / 9%);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.privacy-note strong {
+  color: var(--text);
+}
+
+form {
+  display: grid;
+  gap: 16px;
+}
+
+label {
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+input[type="url"],
+input[type="password"],
+input[type="text"] {
+  width: 100%;
+  border: 1px solid var(--edge);
+  border-radius: 9px;
+  outline: none;
+  background: var(--ink);
+  color: var(--text);
+  padding: 11px 12px;
+  font: inherit;
+}
+
+input:focus {
+  border-color: var(--accent);
+}
+
+.consent-row {
+  grid-template-columns: 18px 1fr;
+  align-items: start;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  line-height: 1.5;
+}
+
+.consent-row input {
+  margin-top: 3px;
+}
+
+code {
+  color: var(--text);
+}
+
+.actions {
+  display: flex;
+  gap: 10px;
+}
+
+button {
+  border: 1px solid var(--edge);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text);
+  padding: 10px 14px;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 650;
+}
+
+button:hover {
+  border-color: var(--muted);
+}
+
+button.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #17130c;
+}
+
+.full-width {
+  width: 100%;
+}
+
+.status {
+  min-height: 20px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.status[data-kind="ok"] {
+  color: var(--cool);
+}
+
+.status[data-kind="error"],
+.latest[data-kind="error"] {
+  color: var(--hot);
+}
+
+.fine-print {
+  margin: 22px 0 0;
+  font-size: 12px;
+}
+
+.popup-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.pill {
+  border-radius: 999px;
+  background: rgb(224 106 100 / 12%);
+  color: var(--hot);
+  padding: 5px 8px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.pill[data-enabled="true"] {
+  background: rgb(90 169 163 / 12%);
+  color: var(--cool);
+}
+
+.latest {
+  min-height: 72px;
+  margin: 18px 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-line;
+}
