@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
 import { explanations, toolCalls } from "@/db/schema";
 import { getIssue, sessionsForIssue, cohortBands } from "@/lib/queries";
@@ -36,9 +36,14 @@ export default async function IssuePage({
   const mix = confidenceMix(rows);
 
   // Repeated targets across every session on this issue — the re-read signal.
+  // One query for all sessions: a per-session loop is an N+1, and each round
+  // trip crosses a region boundary.
   const repeats = new Map<string, number>();
-  for (const s of rows) {
-    const calls = await db.select().from(toolCalls).where(eq(toolCalls.sessionId, s.id));
+  if (rows.length) {
+    const calls = await db
+      .select({ target: toolCalls.target })
+      .from(toolCalls)
+      .where(inArray(toolCalls.sessionId, rows.map((s) => s.id)));
     for (const c of calls) {
       if (!c.target) continue;
       repeats.set(c.target, (repeats.get(c.target) ?? 0) + 1);
