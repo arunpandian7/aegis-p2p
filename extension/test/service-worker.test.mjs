@@ -104,6 +104,7 @@ test("turns a browser snapshot into a private, estimated project session", async
   assert.equal(session.externalProjectId, "g-p-demo");
   assert.equal(session.externalProjectName, "Hackathon");
   assert.equal(session.externalConversationId, "conversation-123");
+  assert.equal(session.conversationTitle, "Demo launch plan");
   assert.equal(session.surface, "chatgpt_web");
   assert.equal(session.captureMethod, "extension");
   assert.equal(session.usageBasis, "estimated");
@@ -113,6 +114,7 @@ test("turns a browser snapshot into a private, estimated project session", async
   assert.equal(session.events[0].inputTokens, 120);
   assert.equal(session.events[0].outputTokens, 340);
   assert.equal(JSON.stringify(payload).includes("secret prompt"), false);
+  assert.equal(app.storage.latestCapture.conversationTitle, "Demo launch plan");
 });
 
 test("does not upload an unchanged conversation twice", async () => {
@@ -122,4 +124,22 @@ test("does not upload an unchanged conversation twice", async () => {
 
   assert.equal(result.skipped, "unchanged");
   assert.equal(app.requests.length, 1);
+});
+
+test("uploads a renamed conversation even when its messages are unchanged", async () => {
+  const app = await harness();
+  await app.dispatch({ type: "AEGIS_CAPTURE", snapshot });
+  const result = await app.dispatch({
+    type: "AEGIS_CAPTURE",
+    snapshot: {
+      ...snapshot,
+      conversationTitle: "Renamed launch plan",
+      contentHash: "b".repeat(64),
+    },
+  });
+
+  assert.equal(result.synced, true);
+  assert.equal(app.requests.length, 2);
+  const payload = JSON.parse(app.requests[1].init.body);
+  assert.equal(payload.sessions[0].conversationTitle, "Renamed launch plan");
 });

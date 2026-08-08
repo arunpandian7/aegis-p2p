@@ -155,12 +155,15 @@ can be replayed safely to the new destination.
 
 - Conversation ID comes from a `/c/<id>` path segment.
 - A project is detected from a `g-p-...` path segment or `/project(s)/<id>` fallback.
+- Conversation title prefers the exact current `/c/<id>` sidebar link, then the branded document title.
 - Messages use `[data-message-author-role=user|assistant]`.
 
 ### Claude
 
 - Conversation ID comes from `/chat/<id>` or `/chats/<id>`.
 - Project ID comes from `/project/<id>` or `/projects/<id>`, with an active-link fallback.
+- Conversation title prefers the semantic `chat-title-button`, then the exact current chat link and
+  branded document title.
 - Preferred semantic selectors are `data-testid`/`data-message-author-role`; the current implementation
   has conservative `font-user-message` and `font-claude-response` fallbacks.
 

@@ -13,7 +13,75 @@
   const MAX_MESSAGE_CHARS = 200_000;
 
   let captureTimer = null;
+  let periodicCaptureTimer = null;
+  let observer = null;
   let lastCaptureStartedAt = 0;
+  let lastCaptureWarning = null;
+  let stopped = false;
+
+  function runtimeIsAvailable() {
+    try {
+      return Boolean(chrome?.runtime?.id);
+    } catch {
+      return false;
+    }
+  }
+
+  function stopCapture() {
+    if (stopped) return;
+    stopped = true;
+    if (captureTimer !== null) clearTimeout(captureTimer);
+    if (periodicCaptureTimer !== null) clearInterval(periodicCaptureTimer);
+    observer?.disconnect();
+    captureTimer = null;
+    periodicCaptureTimer = null;
+  }
+
+  function sendRuntimeMessage(message) {
+    return new Promise((resolve) => {
+      if (!runtimeIsAvailable()) {
+        stopCapture();
+        resolve(null);
+        return;
+      }
+
+      try {
+        // Use the callback form deliberately. When an unpacked extension is
+        // reloaded, Chrome can reject the Promise form outside the caller's
+        // lifetime and report an unhandled "Extension context invalidated".
+        // Reading runtime.lastError inside the callback consumes that failure.
+        chrome.runtime.sendMessage(message, (response) => {
+          let runtimeError = null;
+          try {
+            runtimeError = chrome.runtime.lastError?.message ?? null;
+          } catch {
+            runtimeError = "Extension context invalidated";
+          }
+
+          if (runtimeError) {
+            if (!runtimeIsAvailable() || /extension context invalidated/i.test(runtimeError)) {
+              stopCapture();
+            }
+            resolve(null);
+            return;
+          }
+          resolve(response ?? null);
+        });
+      } catch (error) {
+        if (!runtimeIsAvailable() || /extension context invalidated/i.test(String(error))) {
+          stopCapture();
+        }
+        resolve(null);
+      }
+    });
+  }
+
+  function warnOnce(error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message === lastCaptureWarning) return;
+    lastCaptureWarning = message;
+    console.warn(`[Aegis] Capture skipped: ${message}`);
+  }
 
   function cleanText(value, maxLength = 500) {
     if (typeof value !== "string") return null;
@@ -101,23 +169,6 @@
     }
 
     return null;
-  }
-
-  function conversationTitle(id) {
-    const suffixes = [/\s*[|\-–—]\s*ChatGPT\s*$/i, /\s*[|\-–—]\s*Claude\s*$/i];
-    let title = document.title;
-    for (const suffix of suffixes) title = title.replace(suffix, "");
-    title = cleanText(title, 240);
-    if (title && !/^(chatgpt|claude)$/i.test(title)) return title;
-
-    const currentLink = [...document.querySelectorAll("a[href]")].find((link) => {
-      try {
-        return decodeURIComponent(new URL(link.href, location.href).pathname).includes(id);
-      } catch {
-        return false;
-      }
-    });
-    return cleanText(currentLink?.textContent, 240);
   }
 
   function conversationUrl() {
@@ -208,7 +259,12 @@
     const activeProject = pathProjectId ? { id: pathProjectId, name: null } : projectFromActiveLink();
     const projectId = activeProject.id;
     const name = activeProject.name ?? projectName(projectId);
-    const title = conversationTitle(id);
+    const title = globalThis.AegisConversationTitle.extract({
+      document,
+      provider: PROVIDER,
+      conversationId: id,
+      currentUrl: location.href,
+    });
     const datetimes = messages.map((message) => message.datetime).filter(Boolean).sort();
     const capturedAt = new Date().toISOString();
     // Include placement metadata in the digest so moving a conversation into a
@@ -237,26 +293,39 @@
   }
 
   async function capture() {
+    if (stopped) return;
     captureTimer = null;
     lastCaptureStartedAt = Date.now();
-    const status = await chrome.runtime.sendMessage({ type: "AEGIS_STATUS" }).catch(() => null);
-    if (!status?.enabled) return;
+    try {
+      const status = await sendRuntimeMessage({ type: "AEGIS_STATUS" });
+      if (!status?.enabled || stopped) return;
 
-    const data = await snapshot();
-    if (!data) return;
-    await chrome.runtime.sendMessage({ type: "AEGIS_CAPTURE", snapshot: data }).catch(() => undefined);
+      const data = await snapshot();
+      if (!data || stopped) return;
+      await sendRuntimeMessage({ type: "AEGIS_CAPTURE", snapshot: data });
+      lastCaptureWarning = null;
+    } catch (error) {
+      warnOnce(error);
+    }
   }
 
   function scheduleCapture(delay = 1_500) {
+    if (stopped) return;
+    if (!runtimeIsAvailable()) {
+      stopCapture();
+      return;
+    }
     const elapsed = Date.now() - lastCaptureStartedAt;
     const wait = Math.max(delay, MIN_CAPTURE_INTERVAL_MS - elapsed);
     if (captureTimer !== null) clearTimeout(captureTimer);
     captureTimer = setTimeout(() => void capture(), wait);
   }
 
-  const observer = new MutationObserver(() => scheduleCapture());
-  if (document.body) {
-    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+  observer = new MutationObserver(() => scheduleCapture());
+  if (document.documentElement) {
+    // Observe the head as well as the rendered chat. Both providers can update
+    // document.title after the conversation route has already loaded.
+    observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
   }
 
   addEventListener("popstate", () => scheduleCapture(0));
@@ -265,6 +334,6 @@
     if (message?.type === "AEGIS_CAPTURE_NOW") scheduleCapture(0);
   });
 
-  setInterval(() => scheduleCapture(0), PERIODIC_CAPTURE_MS);
+  periodicCaptureTimer = setInterval(() => scheduleCapture(0), PERIODIC_CAPTURE_MS);
   scheduleCapture(0);
 })();
